@@ -333,3 +333,20 @@ def check_image_exists_in_registry(image_url):
         return_value = True
         logger.info("Image exists in Registry")
     return return_value
+
+
+def remove_ocp_registry_from_ocs(platform):
+    image_registry_obj = ocp.OCP(
+        namespace=constants.OPENSHIFT_IMAGE_REGISTRY_NAMESPACE
+    )
+    if platform == constants.AWS_PLATFORM:
+        image_registry_obj.patch(
+            resource_name='configs.imageregistry.operator.openshift.io',
+            params=" '{\"spec\":{\"storage\":{}}}' "
+        )
+
+    elif platform == constants.VSPHERE_PLATFORM:
+        image_registry_obj.patch(
+            resource_name='configs.imageregistry.operator.openshift.io',
+            params=" '{\"spec\":{\"storage\":{\"emptyDir\":{}}}}' "
+        )
