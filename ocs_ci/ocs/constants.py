@@ -787,3 +787,8 @@ OCS_PROVISIONERS = [
 bucket_website_action_list = ['PutBucketWebsite', 'GetBucketWebsite', 'PutObject']
 bucket_version_action_list = ['PutBucketVersioning', 'GetBucketVersioning']
 object_version_action_list = ['PutObject', 'GetObjectVersion', 'DeleteObjectVersion']
+
+# files
+REMOTE_FILE_URL = "http://download.ceph.com/tarballs/ceph_15.1.0.orig.tar.gz"
+FILE_PATH = '/tmp/ceph.tar.gz'
+
