@@ -929,7 +929,7 @@ def reach_cluster_load_percentage_in_throughput(pod_factory, target_percentage=0
     """
     This function determines how many pods, that are running FIO, needed in order to reach the requested
     cluster load percentage.
-    The number of pods needed for the desired target percentage are determined by
+    The number of pods needed for the desired target percentage is determined by
     creating pods one by one, while examining if the cluster throughput is increased by more than 10%.
     When it doesn't increased by more than 10% anymore after the new pod started running IO, it means that
     the cluster throughput limit is reached. Then, the function deletes the pods that are not needed as they
@@ -948,28 +948,40 @@ def reach_cluster_load_percentage_in_throughput(pod_factory, target_percentage=0
     cl_obj = CephCluster()
     cluster_limit = False
     pod_objs = list()
-    while not cluster_limit:
-        throughput_before = cl_obj.get_cluster_throughput()
-        logging.info(
-            f"The throughput of the cluster before starting "
-            f"IO from an additional pod is {throughput_before}"
-        )
+
+    # Creating 3 pods and starting IO, to speed up the process, based on the assumption
+    # that cluster limit is above 3 pods running IO
+    for i in range(3):
         pod_obj = pod_factory()
         pod_objs.append(pod_obj)
+        throughput_before_io = cl_obj.get_cluster_throughput()
+        for pod_obj in pod_objs:
+            pod_obj.run_io(storage_type='fs', size='5G', runtime=60 ^ 4, rate='32k')
 
-        # 'runtime' is set with a large value of seconds to make sure that the pods are running
-        pod_obj.run_io(storage_type='fs', size='5G', runtime=60 ^ 4, rate='32k')
-        throughput_after = cl_obj.get_cluster_throughput()
+    while not cluster_limit:
+        # Creating an additional pod, which also includes project,
+        # storage class and PVC creation. This takes some time
+        # to complete so in the meantime the previous pod IO should already kick in
+        pod_obj = pod_factory()
+        pod_objs.append(pod_obj)
+        throughput_after_io = cl_obj.get_cluster_throughput()
         logging.info(
             f"The throughput of the cluster after starting "
-            f"IO from an additional pod is {throughput_after}"
+            f"IO from an additional pod is {throughput_after_io}"
         )
-        tp_diff = throughput_after / throughput_before
+        tp_diff = throughput_after_io / throughput_before_io
         logger.info(f"The throughput difference after starting FIO is {tp_diff*100}%")
         if tp_diff < 1.1:
             cluster_limit = True
         else:
             continue
+        throughput_before_io = cl_obj.get_cluster_throughput()
+        logging.info(
+            f"The throughput of the cluster before starting "
+            f"IO from an additional pod is {throughput_before_io}"
+        )
+        # 'runtime' is set with a large value of seconds to make sure that the pods are running
+        pod_obj.run_io(storage_type='fs', size='5G', runtime=60 ^ 4, rate='32k')
 
     pods_num_to_delete = int(len(pod_objs) * (1 - target_percentage))
     pods_to_delete = pod_objs[:-pods_num_to_delete]
