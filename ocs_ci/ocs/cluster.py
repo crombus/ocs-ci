@@ -966,7 +966,7 @@ def reach_cluster_load_percentage_in_throughput(pod_factory, target_percentage=0
         )
         tp_diff = throughput_after / throughput_before
         logger.info(f"The throughput difference after starting FIO is {tp_diff*100}%")
-        if tp_diff < 0.1:
+        if tp_diff < 1.1:
             cluster_limit = True
         else:
             continue
