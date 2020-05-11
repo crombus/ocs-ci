@@ -485,7 +485,7 @@ class CephCluster(object):
         cmd = "ceph status"
         if format:
             cmd += f" -f {format}"
-        return self.toolbox.exec_cmd_on_pod(cmd)
+        return self.toolbox.exec_cmd_on_pod(cmd, out_yaml_format=False)
 
     def get_ceph_capacity(self):
         """
@@ -559,7 +559,6 @@ class CephCluster(object):
             Throughput of the cluster in MiB/s
 
         """
-
         ceph_status = self.get_ceph_status()
         for item in ceph_status.split("\n"):
             if 'client' in item:
@@ -924,3 +923,60 @@ def validate_pg_balancer():
             return False
     else:
         logging.info(f"pg_balancer is not active")
+
+
+def reach_cluster_load_percentage_in_throughput(pod_factory, target_percentage=0.7):
+    """
+    This function determines how many pods, that are running FIO, needed in order to reach the requested
+    cluster load percentage.
+    The number of pods needed for the desired target percentage are determined by
+    creating pods one by one, while examining if the cluster throughput is increased by more than 10%.
+    When it doesn't increased by more than 10% anymore after the new pod started running IO, it means that
+    the cluster throughput limit is reached. Then, the function deletes the pods that are not needed as they
+    are the difference between the limit (100%) and the target percentage (the default target percentage is 70%).
+    This leaves the number of pods needed running IO for cluster throughput to be around the desired
+    percentage.
+
+    Args:
+        pod_factory (function): A call to pod_factory function
+        target_percentage (float): The percentage of cluster load that is required
+
+    Returns:
+         list: Pod objects that are running IO
+
+    """
+    cl_obj = CephCluster()
+    cluster_limit = False
+    pod_objs = list()
+    while not cluster_limit:
+        throughput_before = cl_obj.get_cluster_throughput()
+        logging.info(
+            f"The throughput of the cluster before starting "
+            f"IO from an additional pod is {throughput_before}"
+        )
+        pod_obj = pod_factory()
+        pod_objs.append(pod_obj)
+
+        # 'runtime' is set with a large value of seconds to make sure that the pods are running
+        pod_obj.run_io(storage_type='fs', size='5G', runtime=60 ^ 4, rate='32k')
+        throughput_after = cl_obj.get_cluster_throughput()
+        logging.info(
+            f"The throughput of the cluster after starting "
+            f"IO from an additional pod is {throughput_after}"
+        )
+        tp_diff = throughput_after / throughput_before < 0.1
+        logger.info(f"The throughput difference after starting FIO is {tp_diff*100}%")
+        if throughput_after / throughput_before < 0.1:
+            cluster_limit = True
+        else:
+            continue
+
+    pods_num_to_delete = int(len(pod_objs) * (1 - target_percentage))
+    pods_to_delete = pod_objs[:-pods_num_to_delete]
+    pod_objs.remove(pods_to_delete)
+    for pod_obj in pods_to_delete:
+        pod_obj.delete()
+    for pod_obj in pods_to_delete:
+        pod_obj.ocp.wait_for_delete(pod_obj.name)
+
+    return pod_objs

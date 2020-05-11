@@ -45,6 +45,7 @@ from ocs_ci.utility.utils import (
     get_openshift_client, ocsci_log_path, get_testrun_name,
     ceph_health_check_base, skipif_ocs_version
 )
+from ocs_ci.ocs.cluster import reach_cluster_load_percentage_in_throughput
 from tests import helpers
 from tests.helpers import create_unique_resource_name
 from tests.manage.mcg.helpers import get_rgw_restart_count
@@ -1071,8 +1072,6 @@ def run_io_in_background(request, pod_factory_session):
             with open(temp_file.name, 'w') as t_file:
                 t_file.writelines(status)
 
-        set_test_status('running')
-
         def finalizer():
             """
             Delete the resources created during setup, used for
@@ -1093,41 +1092,41 @@ def run_io_in_background(request, pod_factory_session):
 
             log.info(f"Background IO has stopped")
             for result in results:
-                log.info(f"IOPs after FIO for pod {pod_obj.name}:")
+                log.info(f"IOPs after FIO for pods {[pod.name for pod in pod_objs]}")
                 log.info(f"Read: {result[0]}")
                 log.info(f"Write: {result[1]}")
 
         request.addfinalizer(finalizer)
 
-        pod_obj = pod_factory_session(interface=constants.CEPHBLOCKPOOL)
+        log.info(
+            "Start running IO in the test background. The amount of IO that will be "
+            "written is going to be determined by the cluster capabilities according "
+            "to its throughput limit. IO will be loaded at 50% of the cluster throughput limit"
+        )
+        pod_objs = reach_cluster_load_percentage_in_throughput(
+            pod_factory=pod_factory_session, target_percentage=0.5
+        )
 
-        def run_io_in_bg():
+        set_test_status('running')
+
+        def watch_io_in_bg():
             """
             Run IO by executing FIO and deleting the file created for FIO on
             the pod, in a while true loop. Will be running as long as
             the test is running.
             """
             while get_test_status() == 'running':
-                pod_obj.run_io('fs', '1G')
-                result = pod_obj.get_fio_results()
-                reads = result.get('jobs')[0].get('read').get('iops')
-                writes = result.get('jobs')[0].get('write').get('iops')
-                if g_sheet:
-                    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    g_sheet.insert_row([now, reads, writes])
-
-                results.append((reads, writes))
-
-                file_path = os.path.join(
-                    pod_obj.get_storage_path(storage_type='fs'),
-                    pod_obj.io_params['filename']
-                )
-                pod_obj.exec_cmd_on_pod(f'rm -rf {file_path}')
+                for pod_obj in pod_objs:
+                    result = pod_obj.get_fio_results()
+                    reads = result.get('jobs')[0].get('read').get('iops')
+                    writes = result.get('jobs')[0].get('write').get('iops')
+                    if g_sheet:
+                        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        g_sheet.insert_row([now, reads, writes])
+                    results.append((reads, writes))
             set_test_status('terminated')
 
-        log.info(f"Start running IO in the test background")
-
-        thread = threading.Thread(target=run_io_in_bg)
+        thread = threading.Thread(target=watch_io_in_bg)
         thread.start()
 
 
